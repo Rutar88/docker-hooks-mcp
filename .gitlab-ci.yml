@@ -1,0 +1,442 @@
+# =============================================================================
+# GITLAB CI/CD PIPELINE FOR DOCKER-HOOKS-MCP
+# =============================================================================
+# This pipeline validates, tests, builds, and reports on the todo API project.
+# It uses Docker-in-Docker (dind) for container operations.
+
+# -----------------------------------------------------------------------------
+# STAGES DEFINITION
+# -----------------------------------------------------------------------------
+# Stages run sequentially in the order defined below.
+# Jobs within the same stage run in parallel.
+stages:
+  - validate      # Stage 1: Validate configuration files
+  - test:unit     # Stage 2: Run unit tests (Python pytest)
+  - test:e2e      # Stage 3: Run end-to-end tests with full stack
+  - docker:build  # Stage 4: Build and push Docker images to registry
+  - report        # Stage 5: Generate test reports and coverage
+
+# -----------------------------------------------------------------------------
+# GLOBAL VARIABLES
+# -----------------------------------------------------------------------------
+# These variables are available to all jobs in the pipeline.
+variables:
+  # Docker storage driver - overlay2 is the recommended driver for performance
+  DOCKER_DRIVER: overlay2
+  # Directory where Docker stores TLS certificates for secure communication
+  DOCKER_TLS_CERTDIR: "/certs"
+  # Full path to the API image in GitLab Container Registry
+  # $CI_REGISTRY_IMAGE is automatically set to registry.gitlab.com/<namespace>/<project>
+  API_IMAGE: $CI_REGISTRY_IMAGE/api
+  # PostgreSQL database configuration - matches docker-compose.yml settings
+  POSTGRES_DB: testdb
+  POSTGRES_USER: test
+  POSTGRES_PASSWORD: testpass
+
+# =============================================================================
+# VALIDATE STAGE
+# =============================================================================
+# This stage ensures configuration files are syntactically correct
+# before proceeding with tests and builds.
+
+# -----------------------------------------------------------------------------
+# Job: Validate docker-compose.yml syntax
+# -----------------------------------------------------------------------------
+validate:docker-compose:
+  # Assign this job to the validate stage
+  stage: validate
+  # Use Docker CLI image to run docker compose commands
+  image: docker:24-cli
+  # Enable Docker-in-Docker service for container operations
+  # dind = Docker in Docker - allows running Docker commands inside a container
+  services:
+    - docker:24-dind
+  script:
+    # Validate docker-compose.yml syntax without starting services
+    # --quiet suppresses output, only shows errors
+    - docker compose config --quiet
+    # Print success message if validation passes
+    - echo "docker-compose.yml is valid"
+  # Rules define when this job should run
+  rules:
+    # Run when docker-compose.yml or any API files change
+    - changes:
+        - docker-compose.yml
+        - app/api/**/*
+    # Run on merge request pipelines
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # Run on the default branch (usually main/master)
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# -----------------------------------------------------------------------------
+# Job: Validate mcp.json structure
+# -----------------------------------------------------------------------------
+validate:mcp-json:
+  stage: validate
+  # Use Python Alpine image - small footprint, has json module built-in
+  image: python:3.12-alpine
+  script:
+    # First check: Verify mcp.json is valid JSON syntax
+    # json.load() will raise exception if JSON is malformed
+    - python -c "import json; json.load(open('mcp.json')); print('mcp.json is valid')"
+    # Second check: Verify required keys exist in the configuration
+    # Using multi-line Python script with pipe (|) for readability
+    - |
+      python -c "
+      import json
+      # Load the configuration file
+      cfg = json.load(open('mcp.json'))
+      # Assert required sections exist - will raise AssertionError if missing
+      assert 'docker' in cfg, 'Missing docker config'
+      assert 'postgres' in cfg, 'Missing postgres config'
+      print('mcp.json structure validated')
+      "
+  rules:
+    # Only run when mcp.json changes
+    - changes:
+        - mcp.json
+    # Also run on merge requests
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    # And on the default branch
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# =============================================================================
+# TEST:UNIT STAGE
+# =============================================================================
+# This stage runs unit tests that don't require external services.
+# Tests run against mocked or stubbed dependencies.
+
+# -----------------------------------------------------------------------------
+# Job: Run Python pytest unit tests
+# -----------------------------------------------------------------------------
+test:unit:python:
+  stage: test:unit
+  # Use Python slim image - smaller than full image but has pip
+  image: python:3.12-slim
+  # Commands to run before the main script
+  before_script:
+    # Install test dependencies from requirements.txt:
+    # - pytest: Test runner framework
+    # - pytest-cov: Coverage plugin for pytest
+    # - pytest-html: HTML report generation
+    # - requests: HTTP library for making API calls in tests
+    - pip install -r requirements.txt
+  script:
+    # Run pytest with multiple reporting options:
+    # --junitxml: Generate JUnit XML report for GitLab test integration
+    # --cov: Enable coverage measurement for the tests directory
+    # --cov-report=xml: Generate Cobertura XML coverage report
+    # --cov-report=html: Generate HTML coverage report for browsing
+    # -v: Verbose output showing each test name
+    # || true: Don't fail the job if tests fail (allow_failure handles this)
+    - pytest tests/test_api.py
+        --junitxml=reports/pytest-junit.xml
+        --cov=tests
+        --cov-report=xml:reports/coverage.xml
+        --cov-report=html:reports/coverage-html
+        -v || true
+  # Artifacts are files preserved after the job completes
+  artifacts:
+    # Keep artifacts even if the job fails
+    when: always
+    # Paths to preserve
+    paths:
+      - reports/
+    # Special GitLab integrations for test results
+    reports:
+      # JUnit report shows test results in merge request UI
+      junit: reports/pytest-junit.xml
+      # Coverage report shows code coverage in merge request UI
+      coverage_report:
+        # Cobertura is a standard coverage format GitLab understands
+        coverage_format: cobertura
+        path: reports/coverage.xml
+  # Allow this job to fail without failing the entire pipeline
+  # Useful for unit tests that may fail when API isn't running
+  allow_failure: true
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# =============================================================================
+# TEST:E2E STAGE
+# =============================================================================
+# This stage runs end-to-end tests with the full application stack.
+# Docker Compose starts the API and database, then Jest runs tests.
+
+# -----------------------------------------------------------------------------
+# Job: Run E2E tests with Docker Compose
+# -----------------------------------------------------------------------------
+test:e2e:
+  stage: test:e2e
+  # Docker CLI image for running docker compose commands
+  image: docker:24-cli
+  # Docker-in-Docker service for container operations
+  services:
+    - docker:24-dind
+  variables:
+    # Connect to Docker daemon running in the dind service
+    # tcp://docker:2376 is the secure TLS port
+    DOCKER_HOST: tcp://docker:2376
+    # Enable TLS verification for secure Docker communication
+    DOCKER_TLS_VERIFY: 1
+    # Path to TLS certificates for Docker client
+    DOCKER_CERT_PATH: "/certs/client"
+  before_script:
+    # Install Node.js and npm in Alpine Linux (apk is Alpine's package manager)
+    # --no-cache avoids storing package index locally, saving space
+    # curl is needed for health check requests
+    - apk add --no-cache nodejs npm curl
+    # Navigate to tests directory and install npm dependencies
+    # npm ci is faster than npm install and uses package-lock.json exactly
+    - cd tests && npm ci
+  script:
+    # Start all services defined in docker-compose.yml:
+    # -d: Detached mode (run in background)
+    # --build: Rebuild images before starting
+    # --wait: Wait for services to be healthy before returning
+    - docker compose up -d --build --wait
+    # Show status of running containers for debugging
+    - docker compose ps
+    # Wait for API to be ready with a polling loop:
+    # - Try up to 30 times with 2 second delays (60 seconds max)
+    # - curl -s: Silent mode (no progress bar)
+    # - > /dev/null 2>&1: Discard all output, only check exit code
+    - |
+      echo "Waiting for API to be ready..."
+      for i in $(seq 1 30); do
+        if curl -s http://docker:3000/todos > /dev/null 2>&1; then
+          echo "API is ready!"
+          break
+        fi
+        echo "Attempt $i/30..."
+        sleep 2
+      done
+    # Run Jest E2E tests:
+    # API_URL: Override default localhost with Docker network hostname
+    # --ci: Optimized for CI environments (no interactive prompts)
+    # --reporters: Output formats (default for console, jest-junit for XML)
+    # || E2E_EXIT=$?: Capture exit code instead of failing immediately
+    - cd tests && API_URL=http://docker:3000 npm test -- --ci --reporters=default --reporters=jest-junit || E2E_EXIT=$?
+    # Save API container logs for debugging failed tests
+    # || true: Don't fail if log collection fails
+    - docker compose logs api > reports/api-logs.txt 2>&1 || true
+    # Stop and remove all containers, networks, and volumes
+    # -v: Also remove named volumes defined in docker-compose.yml
+    - docker compose down -v
+    # Exit with the test exit code (0 if tests passed, non-zero if failed)
+    # ${E2E_EXIT:-0}: Use E2E_EXIT if set, otherwise default to 0
+    - exit ${E2E_EXIT:-0}
+  artifacts:
+    # Keep artifacts regardless of job success/failure
+    when: always
+    paths:
+      # General reports directory
+      - reports/
+      # Jest JUnit test results
+      - tests/junit.xml
+    reports:
+      # Register JUnit report for GitLab test results UI
+      junit: tests/junit.xml
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# =============================================================================
+# DOCKER:BUILD STAGE
+# =============================================================================
+# This stage builds Docker images and pushes them to GitLab Container Registry.
+# Different jobs handle main branch vs. merge request builds.
+
+# -----------------------------------------------------------------------------
+# Job: Build and push Docker image (main branch and tags)
+# -----------------------------------------------------------------------------
+docker:build:api:
+  stage: docker:build
+  image: docker:24-cli
+  services:
+    - docker:24-dind
+  variables:
+    # Docker daemon connection settings (same as test:e2e)
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_VERIFY: 1
+    DOCKER_CERT_PATH: "/certs/client"
+  before_script:
+    # Authenticate with GitLab Container Registry
+    # $CI_REGISTRY: GitLab registry URL (e.g., registry.gitlab.com)
+    # $CI_REGISTRY_USER: Username for registry (gitlab-ci-token)
+    # $CI_REGISTRY_PASSWORD: Auto-generated CI job token
+    - docker login -u $CI_REGISTRY_USER -p $CI_REGISTRY_PASSWORD $CI_REGISTRY
+  script:
+    # Build Docker image with two tags:
+    # -t $API_IMAGE:$CI_COMMIT_SHA: Tag with full commit SHA for traceability
+    # -t $API_IMAGE:latest: Tag as latest for easy reference
+    # ./app/api: Build context directory containing Dockerfile
+    - docker build -t $API_IMAGE:$CI_COMMIT_SHA -t $API_IMAGE:latest ./app/api
+    # Push both tags to the registry
+    - docker push $API_IMAGE:$CI_COMMIT_SHA
+    - docker push $API_IMAGE:latest
+  rules:
+    # Run on the default branch (main/master)
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    # Run on tagged commits (for releases)
+    - if: $CI_COMMIT_TAG
+
+# -----------------------------------------------------------------------------
+# Job: Build Docker image for merge requests (no push)
+# -----------------------------------------------------------------------------
+docker:build:api:mr:
+  stage: docker:build
+  image: docker:24-cli
+  services:
+    - docker:24-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2376
+    DOCKER_TLS_VERIFY: 1
+    DOCKER_CERT_PATH: "/certs/client"
+  # No before_script with docker login - we're not pushing
+  script:
+    # Build image tagged with merge request ID for identification
+    # $CI_MERGE_REQUEST_IID: Internal ID of the merge request
+    - docker build -t $API_IMAGE:mr-$CI_MERGE_REQUEST_IID ./app/api
+    # Confirm build succeeded (image stays local, not pushed)
+    - echo "Image built successfully (not pushed for MR)"
+  rules:
+    # Only run on merge request pipelines
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+
+# =============================================================================
+# REPORT STAGE
+# =============================================================================
+# This stage aggregates test results and generates final reports.
+# It runs after all tests complete to provide a summary.
+
+# -----------------------------------------------------------------------------
+# Job: Generate pipeline summary report
+# -----------------------------------------------------------------------------
+report:summary:
+  stage: report
+  # Lightweight Python Alpine image for parsing XML reports
+  image: python:3.12-alpine
+  # Download artifacts from these jobs to access their reports
+  dependencies:
+    - test:unit:python
+    - test:e2e
+  script:
+    # Print header banner for the summary report
+    - |
+      echo "========================================="
+      echo "         CI/CD PIPELINE SUMMARY         "
+      echo "========================================="
+      echo "Commit: $CI_COMMIT_SHA"
+      echo "Branch: $CI_COMMIT_BRANCH"
+      echo "Pipeline: $CI_PIPELINE_ID"
+      echo ""
+    # Parse and display pytest results if the report exists
+    - |
+      if [ -f reports/pytest-junit.xml ]; then
+        echo "=== PYTEST RESULTS ==="
+        python -c "
+      # Import XML parsing library
+      import xml.etree.ElementTree as ET
+      try:
+          # Parse the JUnit XML file
+          tree = ET.parse('reports/pytest-junit.xml')
+          root = tree.getroot()
+          # Find the testsuite element containing results
+          ts = root.find('testsuite')
+          if ts is not None:
+              # Extract and print test statistics
+              print(f\"Tests: {ts.get('tests', 0)}\")
+              print(f\"Failures: {ts.get('failures', 0)}\")
+              print(f\"Errors: {ts.get('errors', 0)}\")
+              print(f\"Time: {ts.get('time', 0)}s\")
+      except Exception as e:
+          print(f'Could not parse pytest results: {e}')
+      "
+      fi
+    # Parse and display Jest E2E results if the report exists
+    - |
+      if [ -f tests/junit.xml ]; then
+        echo ""
+        echo "=== JEST E2E RESULTS ==="
+        python -c "
+      import xml.etree.ElementTree as ET
+      try:
+          tree = ET.parse('tests/junit.xml')
+          root = tree.getroot()
+          # Jest may have multiple testsuites, iterate through all
+          for ts in root.findall('testsuite'):
+              print(f\"Suite: {ts.get('name', 'unknown')}\")
+              print(f\"Tests: {ts.get('tests', 0)}\")
+              print(f\"Failures: {ts.get('failures', 0)}\")
+              print(f\"Time: {ts.get('time', 0)}s\")
+      except Exception as e:
+          print(f'Could not parse Jest results: {e}')
+      "
+      fi
+    # Parse and display coverage percentage if report exists
+    - |
+      if [ -f reports/coverage.xml ]; then
+        echo ""
+        echo "=== COVERAGE ==="
+        python -c "
+      import xml.etree.ElementTree as ET
+      try:
+          tree = ET.parse('reports/coverage.xml')
+          root = tree.getroot()
+          # Cobertura format stores coverage as decimal (0.0-1.0)
+          # Multiply by 100 to get percentage
+          line_rate = float(root.get('line-rate', 0)) * 100
+          print(f'Line coverage: {line_rate:.1f}%')
+      except Exception as e:
+          print(f'Could not parse coverage: {e}')
+      "
+      fi
+    # Print footer
+    - echo ""
+    - echo "========================================="
+  artifacts:
+    when: always
+    paths:
+      - reports/
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+
+# -----------------------------------------------------------------------------
+# Job: Publish coverage report to GitLab Pages
+# -----------------------------------------------------------------------------
+report:pages:
+  stage: report
+  # Minimal Alpine image - just need to copy files
+  image: alpine:latest
+  # Get artifacts from unit test job containing HTML coverage report
+  dependencies:
+    - test:unit:python
+  script:
+    # Create public directory for GitLab Pages
+    # GitLab Pages serves content from the 'public' directory
+    - mkdir -p public
+    # Copy HTML coverage report to public directory if it exists
+    - |
+      if [ -d reports/coverage-html ]; then
+        cp -r reports/coverage-html/* public/
+      else
+        # Create placeholder if no coverage report available
+        echo "<h1>No coverage report available</h1>" > public/index.html
+      fi
+  artifacts:
+    # GitLab Pages requires artifacts in 'public' directory
+    paths:
+      - public
+  rules:
+    # Only publish pages from the default branch
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  # Define the deployment environment
+  environment:
+    # Name shown in GitLab Environments
+    name: coverage-report
+    # URL where the pages will be accessible
+    # $CI_PAGES_URL is auto-set to https://<namespace>.gitlab.io/<project>
+    url: $CI_PAGES_URL
