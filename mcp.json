@@ -1,0 +1,10 @@
+{
+  "docker": {
+    "enabled": true
+  },
+  "postgres": {
+    "enabled": true,
+    "host": "localhost",
+    "port": 5432
+  }
+}

@@ -1,0 +1,38 @@
+version: '3.8'
+
+services:
+  api:
+    build: ./app/api
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgres://test:testpass@postgres:5432/testdb
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - test-network
+
+  postgres:
+    image: postgres:15-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_DB=testdb
+      - POSTGRES_USER=test
+      - POSTGRES_PASSWORD=testpass
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test -d testdb"]
+      interval: 2s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - test-network
+
+volumes:
+  postgres_data:
+
+networks:
+  test-network:

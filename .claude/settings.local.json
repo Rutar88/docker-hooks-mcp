@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pytest:*)",
+      "Bash(docker compose:*)",
+      "Bash(brew install:*)",
+      "Bash(brew link:*)",
+      "Bash(open:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker:*)",
+      "Bash(docker info:*)",
+      "Bash(curl:*)",
+      "Bash(git add:*)",
+      "Bash(git init:*)",
+      "Bash(git commit:*)"
+    ]
+  }
+}
