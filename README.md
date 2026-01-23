@@ -1,63 +1,63 @@
 # Docker Hooks MCP
 
-Demo projekt pokazujący pełny workflow CI/CD z GitLab, Docker i testami automatycznymi.
+A demo project showcasing a complete CI/CD workflow with GitLab, Docker, and automated testing.
 
-## Co to jest?
+## What is this?
 
-Prosty REST API do zarządzania listą zadań (todos) z:
-- Automatycznym pipeline CI/CD w GitLab
-- Konteneryzacją Docker
-- Testami jednostkowymi (Python/pytest) i E2E (JavaScript/Jest)
-- Publikacją obrazu do GitLab Container Registry
+A simple REST API for managing a todo list featuring:
+- Automated CI/CD pipeline in GitLab
+- Docker containerization
+- Unit tests (Python/pytest) and E2E tests (JavaScript/Jest)
+- Image publishing to GitLab Container Registry
 
 ## Tech Stack
 
-| Komponent | Technologia |
-|-----------|-------------|
+| Component | Technology |
+|-----------|------------|
 | API | Node.js + Express |
-| Baza danych | PostgreSQL 15 |
-| Testy E2E | Jest + Supertest |
-| Testy jednostkowe | Python + pytest |
-| Konteneryzacja | Docker + Docker Compose |
+| Database | PostgreSQL 15 |
+| E2E Tests | Jest + Supertest |
+| Unit Tests | Python + pytest |
+| Containerization | Docker + Docker Compose |
 | CI/CD | GitLab CI/CD |
 
 ## API Endpoints
 
-| Metoda | Endpoint | Opis |
-|--------|----------|------|
-| GET | `/todos` | Pobierz wszystkie zadania |
-| POST | `/todos` | Utwórz nowe zadanie |
-| DELETE | `/todos/:id` | Usuń zadanie |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/todos` | Get all todos |
+| POST | `/todos` | Create a new todo |
+| DELETE | `/todos/:id` | Delete a todo |
 
-## Uruchomienie lokalne
+## Running Locally
 
-### Docker Compose (zalecane)
+### Docker Compose (recommended)
 
 ```bash
-# Uruchom API + PostgreSQL
+# Start API + PostgreSQL
 docker compose up -d
 
 # Test
 curl http://localhost:3000/todos
 
-# Zatrzymaj
+# Stop
 docker compose down -v
 ```
 
-### Z obrazu GitLab Registry
+### From GitLab Registry
 
 ```bash
-# Utwórz sieć
+# Create network
 docker network create test-net
 
-# Uruchom PostgreSQL
+# Start PostgreSQL
 docker run -d --name postgres-test --network test-net \
   -e POSTGRES_DB=testdb \
   -e POSTGRES_USER=test \
   -e POSTGRES_PASSWORD=testpass \
   postgres:15-alpine
 
-# Uruchom API z GitLab Registry
+# Start API from GitLab Registry
 docker run -d --name api-test --network test-net \
   -p 3000:3000 \
   -e DATABASE_URL=postgres://test:testpass@postgres-test:5432/testdb \
@@ -67,59 +67,59 @@ docker run -d --name api-test --network test-net \
 curl http://localhost:3000/todos
 ```
 
-## Uruchomienie testów
+## Running Tests
 
 ```bash
-# Upewnij się, że API działa (docker compose up -d)
+# Make sure API is running (docker compose up -d)
 
-# Testy E2E (JavaScript)
+# E2E tests (JavaScript)
 cd tests && API_URL=http://localhost:3000 npm test
 
-# Testy jednostkowe (Python)
+# Unit tests (Python)
 pip install -r requirements.txt
 pytest tests/test_api.py -v
 ```
 
 ## CI/CD Pipeline
 
-Pipeline GitLab składa się z 5 etapów:
+The GitLab pipeline consists of 5 stages:
 
 ```
 validate → test:unit → test:e2e → docker:build → report
 ```
 
-### Etapy
+### Stages
 
-| Stage | Job | Opis |
-|-------|-----|------|
-| validate | validate:docker-compose | Walidacja docker-compose.yml |
-| validate | validate:mcp-json | Walidacja mcp.json |
-| test:unit | test:unit:python | Testy pytest |
-| test:e2e | test:e2e | Testy Jest z Docker Compose |
-| docker:build | docker:build:api | Build i push obrazu do registry |
-| report | report:summary | Podsumowanie wyników |
-| report | report:pages | Publikacja coverage na GitLab Pages |
+| Stage | Job | Description |
+|-------|-----|-------------|
+| validate | validate:docker-compose | Validate docker-compose.yml |
+| validate | validate:mcp-json | Validate mcp.json |
+| test:unit | test:unit:python | Run pytest tests |
+| test:e2e | test:e2e | Run Jest tests with Docker Compose |
+| docker:build | docker:build:api | Build and push image to registry |
+| report | report:summary | Test results summary |
+| report | report:pages | Publish coverage to GitLab Pages |
 
-## Struktura projektu
+## Project Structure
 
 ```
 docker-hooks-mcp/
 ├── app/
 │   └── api/
-│       ├── Dockerfile        # Obraz API
-│       ├── server.js         # Serwer Express
+│       ├── Dockerfile        # API image
+│       ├── server.js         # Express server
 │       └── package.json
 ├── tests/
-│   ├── api.test.js          # Testy E2E (Jest)
-│   ├── test_api.py          # Testy jednostkowe (pytest)
+│   ├── api.test.js          # E2E tests (Jest)
+│   ├── test_api.py          # Unit tests (pytest)
 │   └── package.json
-├── docker-compose.yml        # Konfiguracja lokalnego środowiska
-├── mcp.json                  # Konfiguracja MCP
-├── .gitlab-ci.yml           # Pipeline CI/CD
-└── requirements.txt          # Zależności Python
+├── docker-compose.yml        # Local environment config
+├── mcp.json                  # MCP configuration
+├── .gitlab-ci.yml           # CI/CD pipeline
+└── requirements.txt          # Python dependencies
 ```
 
-## Architektura
+## Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
@@ -145,14 +145,14 @@ docker-hooks-mcp/
 └─────────────────────────────────────────────────────────┘
 ```
 
-## Zmienne środowiskowe
+## Environment Variables
 
-| Zmienna | Domyślna | Opis |
-|---------|----------|------|
-| DATABASE_URL | postgres://test:testpass@localhost:5432/testdb | Connection string do PostgreSQL |
-| PORT | 3000 | Port API |
-| API_URL | http://localhost:3000 | URL API dla testów |
+| Variable | Default | Description |
+|----------|---------|-------------|
+| DATABASE_URL | postgres://test:testpass@localhost:5432/testdb | PostgreSQL connection string |
+| PORT | 3000 | API port |
+| API_URL | http://localhost:3000 | API URL for tests |
 
-## Licencja
+## License
 
 MIT
