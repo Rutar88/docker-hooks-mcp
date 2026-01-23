@@ -216,12 +216,12 @@ test:e2e:
     # Run Jest E2E tests:
     # API_URL: Override default localhost with Docker network hostname
     # --ci: Optimized for CI environments (no interactive prompts)
-    # --reporters: Output formats (default for console, jest-junit for XML)
+    # Reporters are configured in package.json (default + jest-junit)
     # || E2E_EXIT=$?: Capture exit code instead of failing immediately
-    - cd tests && API_URL=http://docker:3000 npm test -- --ci --reporters=default --reporters=jest-junit || E2E_EXIT=$?
+    - cd tests && API_URL=http://docker:3000 npm test -- --ci || E2E_EXIT=$?
     # Save API container logs for debugging failed tests
-    # || true: Don't fail if log collection fails
-    - docker compose logs api > reports/api-logs.txt 2>&1 || true
+    # Create reports dir if it doesn't exist, || true: Don't fail if log collection fails
+    - mkdir -p reports && docker compose logs api > reports/api-logs.txt 2>&1 || true
     # Stop and remove all containers, networks, and volumes
     # -v: Also remove named volumes defined in docker-compose.yml
     - docker compose down -v
