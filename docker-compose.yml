@@ -1,38 +1,98 @@
-version: '3.8'
+# =============================================================================
+# DOCKER COMPOSE CONFIGURATION
+# =============================================================================
+# This file defines the local development environment for the Todo API.
+# Run with: docker compose up -d
+# Stop with: docker compose down -v
 
+# -----------------------------------------------------------------------------
+# SERVICES
+# -----------------------------------------------------------------------------
 services:
+
+  # ---------------------------------------------------------------------------
+  # API Service - Node.js Express application
+  # ---------------------------------------------------------------------------
   api:
+    # Build the image from Dockerfile in ./app/api directory
     build: ./app/api
+
+    # Port mapping: HOST:CONTAINER
+    # Exposes container port 3000 on localhost:3000
     ports:
       - "3000:3000"
+
+    # Environment variables passed to the container
     environment:
+      # PostgreSQL connection string
+      # Format: postgres://USER:PASSWORD@HOST:PORT/DATABASE
+      # 'postgres' refers to the service name (Docker DNS)
       - DATABASE_URL=postgres://test:testpass@postgres:5432/testdb
+
+    # Service dependency configuration
     depends_on:
       postgres:
+        # Wait for PostgreSQL healthcheck to pass before starting API
+        # Prevents connection errors on startup
         condition: service_healthy
+
+    # Connect to custom network for inter-service communication
     networks:
       - test-network
 
+    # Healthcheck for the API service
+    healthcheck:
+      # Check if /todos endpoint responds
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:3000/todos"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # ---------------------------------------------------------------------------
+  # PostgreSQL Database Service
+  # ---------------------------------------------------------------------------
   postgres:
+    # Use official PostgreSQL 15 Alpine image (lightweight)
     image: postgres:15-alpine
+
+    # Port mapping for external access (e.g., database tools)
     ports:
       - "5432:5432"
+
+    # PostgreSQL configuration via environment variables
     environment:
-      - POSTGRES_DB=testdb
-      - POSTGRES_USER=test
-      - POSTGRES_PASSWORD=testpass
+      - POSTGRES_DB=testdb       # Database name to create
+      - POSTGRES_USER=test       # Database user
+      - POSTGRES_PASSWORD=testpass  # Database password
+
+    # Healthcheck to verify database is ready to accept connections
     healthcheck:
+      # pg_isready checks if PostgreSQL is accepting connections
       test: ["CMD-SHELL", "pg_isready -U test -d testdb"]
-      interval: 2s
-      timeout: 5s
-      retries: 10
+      interval: 2s    # Check every 2 seconds
+      timeout: 5s     # Timeout after 5 seconds
+      retries: 10     # Retry up to 10 times before marking unhealthy
+
+    # Persistent volume for database data
     volumes:
+      # Named volume to persist data between container restarts
       - postgres_data:/var/lib/postgresql/data
+
+    # Connect to custom network
     networks:
       - test-network
 
+# -----------------------------------------------------------------------------
+# VOLUMES
+# -----------------------------------------------------------------------------
+# Named volumes persist data outside container lifecycle
 volumes:
-  postgres_data:
+  postgres_data:  # Stores PostgreSQL database files
 
+# -----------------------------------------------------------------------------
+# NETWORKS
+# -----------------------------------------------------------------------------
+# Custom network for service-to-service communication
+# Services can reach each other by service name (e.g., 'postgres')
 networks:
   test-network:
