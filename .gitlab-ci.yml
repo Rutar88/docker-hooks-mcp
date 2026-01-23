@@ -189,7 +189,8 @@ test:e2e:
     - apk add --no-cache nodejs npm curl
     # Navigate to tests directory and install npm dependencies
     # npm ci is faster than npm install and uses package-lock.json exactly
-    - cd tests && npm ci
+    # Return to root directory after install
+    - cd tests && npm ci && cd ..
   script:
     # Start all services defined in docker-compose.yml:
     # -d: Detached mode (run in background)
