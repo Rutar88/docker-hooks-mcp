@@ -1,93 +1,158 @@
-# docker-hooks-mcp
+# Docker Hooks MCP
 
+Demo projekt pokazujący pełny workflow CI/CD z GitLab, Docker i testami automatycznymi.
 
+## Co to jest?
 
-## Getting started
+Prosty REST API do zarządzania listą zadań (todos) z:
+- Automatycznym pipeline CI/CD w GitLab
+- Konteneryzacją Docker
+- Testami jednostkowymi (Python/pytest) i E2E (JavaScript/Jest)
+- Publikacją obrazu do GitLab Container Registry
 
-To make it easy for you to get started with GitLab, here's a list of recommended next steps.
+## Tech Stack
 
-Already a pro? Just edit this README.md and make it your own. Want to make it easy? [Use the template at the bottom](#editing-this-readme)!
+| Komponent | Technologia |
+|-----------|-------------|
+| API | Node.js + Express |
+| Baza danych | PostgreSQL 15 |
+| Testy E2E | Jest + Supertest |
+| Testy jednostkowe | Python + pytest |
+| Konteneryzacja | Docker + Docker Compose |
+| CI/CD | GitLab CI/CD |
 
-## Add your files
+## API Endpoints
 
-* [Create](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#create-a-file) or [upload](https://docs.gitlab.com/ee/user/project/repository/web_editor.html#upload-a-file) files
-* [Add files using the command line](https://docs.gitlab.com/topics/git/add_files/#add-files-to-a-git-repository) or push an existing Git repository with the following command:
+| Metoda | Endpoint | Opis |
+|--------|----------|------|
+| GET | `/todos` | Pobierz wszystkie zadania |
+| POST | `/todos` | Utwórz nowe zadanie |
+| DELETE | `/todos/:id` | Usuń zadanie |
+
+## Uruchomienie lokalne
+
+### Docker Compose (zalecane)
+
+```bash
+# Uruchom API + PostgreSQL
+docker compose up -d
+
+# Test
+curl http://localhost:3000/todos
+
+# Zatrzymaj
+docker compose down -v
+```
+
+### Z obrazu GitLab Registry
+
+```bash
+# Utwórz sieć
+docker network create test-net
+
+# Uruchom PostgreSQL
+docker run -d --name postgres-test --network test-net \
+  -e POSTGRES_DB=testdb \
+  -e POSTGRES_USER=test \
+  -e POSTGRES_PASSWORD=testpass \
+  postgres:15-alpine
+
+# Uruchom API z GitLab Registry
+docker run -d --name api-test --network test-net \
+  -p 3000:3000 \
+  -e DATABASE_URL=postgres://test:testpass@postgres-test:5432/testdb \
+  registry.gitlab.com/docker-hooks-mcp-claude/docker-hooks-mcp/api:latest
+
+# Test
+curl http://localhost:3000/todos
+```
+
+## Uruchomienie testów
+
+```bash
+# Upewnij się, że API działa (docker compose up -d)
+
+# Testy E2E (JavaScript)
+cd tests && API_URL=http://localhost:3000 npm test
+
+# Testy jednostkowe (Python)
+pip install -r requirements.txt
+pytest tests/test_api.py -v
+```
+
+## CI/CD Pipeline
+
+Pipeline GitLab składa się z 5 etapów:
 
 ```
-cd existing_repo
-git remote add origin https://gitlab.com/docker-hooks-mcp-claude/docker-hooks-mcp.git
-git branch -M main
-git push -uf origin main
+validate → test:unit → test:e2e → docker:build → report
 ```
 
-## Integrate with your tools
+### Etapy
 
-* [Set up project integrations](https://gitlab.com/docker-hooks-mcp-claude/docker-hooks-mcp/-/settings/integrations)
+| Stage | Job | Opis |
+|-------|-----|------|
+| validate | validate:docker-compose | Walidacja docker-compose.yml |
+| validate | validate:mcp-json | Walidacja mcp.json |
+| test:unit | test:unit:python | Testy pytest |
+| test:e2e | test:e2e | Testy Jest z Docker Compose |
+| docker:build | docker:build:api | Build i push obrazu do registry |
+| report | report:summary | Podsumowanie wyników |
+| report | report:pages | Publikacja coverage na GitLab Pages |
 
-## Collaborate with your team
+## Struktura projektu
 
-* [Invite team members and collaborators](https://docs.gitlab.com/ee/user/project/members/)
-* [Create a new merge request](https://docs.gitlab.com/ee/user/project/merge_requests/creating_merge_requests.html)
-* [Automatically close issues from merge requests](https://docs.gitlab.com/ee/user/project/issues/managing_issues.html#closing-issues-automatically)
-* [Enable merge request approvals](https://docs.gitlab.com/ee/user/project/merge_requests/approvals/)
-* [Set auto-merge](https://docs.gitlab.com/user/project/merge_requests/auto_merge/)
+```
+docker-hooks-mcp/
+├── app/
+│   └── api/
+│       ├── Dockerfile        # Obraz API
+│       ├── server.js         # Serwer Express
+│       └── package.json
+├── tests/
+│   ├── api.test.js          # Testy E2E (Jest)
+│   ├── test_api.py          # Testy jednostkowe (pytest)
+│   └── package.json
+├── docker-compose.yml        # Konfiguracja lokalnego środowiska
+├── mcp.json                  # Konfiguracja MCP
+├── .gitlab-ci.yml           # Pipeline CI/CD
+└── requirements.txt          # Zależności Python
+```
 
-## Test and Deploy
+## Architektura
 
-Use the built-in continuous integration in GitLab.
+```
+┌─────────────────────────────────────────────────────────┐
+│                    GitLab CI/CD                         │
+│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌───────────┐  │
+│  │validate │→ │test:unit│→ │test:e2e │→ │docker:build│  │
+│  └─────────┘  └─────────┘  └─────────┘  └─────────────┘  │
+└─────────────────────────────────────────────────────────┘
+                                              │
+                                              ▼
+                              ┌───────────────────────────┐
+                              │  GitLab Container Registry │
+                              │  registry.gitlab.com/...   │
+                              └───────────────────────────┘
+                                              │
+                                              ▼
+┌─────────────────────────────────────────────────────────┐
+│                   Docker Network                         │
+│  ┌─────────────────┐       ┌─────────────────────────┐  │
+│  │   PostgreSQL    │◄──────│      Node.js API        │  │
+│  │   :5432         │       │      :3000              │  │
+│  └─────────────────┘       └─────────────────────────┘  │
+└─────────────────────────────────────────────────────────┘
+```
 
-* [Get started with GitLab CI/CD](https://docs.gitlab.com/ee/ci/quick_start/)
-* [Analyze your code for known vulnerabilities with Static Application Security Testing (SAST)](https://docs.gitlab.com/ee/user/application_security/sast/)
-* [Deploy to Kubernetes, Amazon EC2, or Amazon ECS using Auto Deploy](https://docs.gitlab.com/ee/topics/autodevops/requirements.html)
-* [Use pull-based deployments for improved Kubernetes management](https://docs.gitlab.com/ee/user/clusters/agent/)
-* [Set up protected environments](https://docs.gitlab.com/ee/ci/environments/protected_environments.html)
+## Zmienne środowiskowe
 
-***
+| Zmienna | Domyślna | Opis |
+|---------|----------|------|
+| DATABASE_URL | postgres://test:testpass@localhost:5432/testdb | Connection string do PostgreSQL |
+| PORT | 3000 | Port API |
+| API_URL | http://localhost:3000 | URL API dla testów |
 
-# Editing this README
+## Licencja
 
-When you're ready to make this README your own, just edit this file and use the handy template below (or feel free to structure it however you want - this is just a starting point!). Thanks to [makeareadme.com](https://www.makeareadme.com/) for this template.
-
-## Suggestions for a good README
-
-Every project is different, so consider which of these sections apply to yours. The sections used in the template are suggestions for most open source projects. Also keep in mind that while a README can be too long and detailed, too long is better than too short. If you think your README is too long, consider utilizing another form of documentation rather than cutting out information.
-
-## Name
-Choose a self-explaining name for your project.
-
-## Description
-Let people know what your project can do specifically. Provide context and add a link to any reference visitors might be unfamiliar with. A list of Features or a Background subsection can also be added here. If there are alternatives to your project, this is a good place to list differentiating factors.
-
-## Badges
-On some READMEs, you may see small images that convey metadata, such as whether or not all the tests are passing for the project. You can use Shields to add some to your README. Many services also have instructions for adding a badge.
-
-## Visuals
-Depending on what you are making, it can be a good idea to include screenshots or even a video (you'll frequently see GIFs rather than actual videos). Tools like ttygif can help, but check out Asciinema for a more sophisticated method.
-
-## Installation
-Within a particular ecosystem, there may be a common way of installing things, such as using Yarn, NuGet, or Homebrew. However, consider the possibility that whoever is reading your README is a novice and would like more guidance. Listing specific steps helps remove ambiguity and gets people to using your project as quickly as possible. If it only runs in a specific context like a particular programming language version or operating system or has dependencies that have to be installed manually, also add a Requirements subsection.
-
-## Usage
-Use examples liberally, and show the expected output if you can. It's helpful to have inline the smallest example of usage that you can demonstrate, while providing links to more sophisticated examples if they are too long to reasonably include in the README.
-
-## Support
-Tell people where they can go to for help. It can be any combination of an issue tracker, a chat room, an email address, etc.
-
-## Roadmap
-If you have ideas for releases in the future, it is a good idea to list them in the README.
-
-## Contributing
-State if you are open to contributions and what your requirements are for accepting them.
-
-For people who want to make changes to your project, it's helpful to have some documentation on how to get started. Perhaps there is a script that they should run or some environment variables that they need to set. Make these steps explicit. These instructions could also be useful to your future self.
-
-You can also document commands to lint the code or run tests. These steps help to ensure high code quality and reduce the likelihood that the changes inadvertently break something. Having instructions for running tests is especially helpful if it requires external setup, such as starting a Selenium server for testing in a browser.
-
-## Authors and acknowledgment
-Show your appreciation to those who have contributed to the project.
-
-## License
-For open source projects, say how it is licensed.
-
-## Project status
-If you have run out of energy or time for your project, put a note at the top of the README saying that development has slowed down or stopped completely. Someone may choose to fork your project or volunteer to step in as a maintainer or owner, allowing your project to keep going. You can also make an explicit request for maintainers.
+MIT
