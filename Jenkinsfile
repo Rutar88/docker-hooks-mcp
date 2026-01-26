@@ -60,10 +60,16 @@ pipeline {
                         -e API_URL=http://api:3000 \
                         -v "$(pwd)/tests:/tests" \
                         -w /tests \
-                        node:20-alpine sh -c "npm ci && npm test -- --forceExit"
+                        node:20-alpine sh -c "npm ci && npm run test:ci"
 
                     echo "=== E2E tests completed ==="
                 '''
+            }
+        }
+
+        stage('Publish Test Results') {
+            steps {
+                junit 'tests/junit.xml'
             }
         }
 
