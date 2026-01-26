@@ -12,7 +12,11 @@
       "Bash(curl:*)",
       "Bash(git add:*)",
       "Bash(git init:*)",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(tree:*)",
+      "Bash(find:*)",
+      "Bash(docker-compose:*)",
+      "Bash(git push)"
     ]
   }
 }
