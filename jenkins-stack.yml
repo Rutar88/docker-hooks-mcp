@@ -1,0 +1,132 @@
+# =============================================================================
+# JENKINS CI/CD STACK WITH DOCKER SUPPORT
+# =============================================================================
+# This stack provides Jenkins with Docker capabilities for running pipelines.
+#
+# Usage:
+#   docker-compose -f jenkins-stack.yml up -d
+#   Open: http://localhost:8080
+#   Password: docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+#
+# Architecture:
+#   jenkins (controller) <---> docker (dind) <---> containers
+
+version: '3.8'
+
+services:
+  # ---------------------------------------------------------------------------
+  # JENKINS CONTROLLER
+  # ---------------------------------------------------------------------------
+  jenkins:
+    image: jenkins/jenkins:lts-jdk17
+    container_name: jenkins
+    restart: unless-stopped
+    ports:
+      # Jenkins web UI
+      - "8080:8080"
+      # Jenkins agent port (for distributed builds)
+      - "50000:50000"
+    volumes:
+      # Persist Jenkins configuration and jobs
+      - jenkins_home:/var/jenkins_home
+      # Mount Docker socket for direct Docker access (alternative to dind)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Share workspace with Docker containers
+      - jenkins_workspace:/var/jenkins_home/workspace
+      # TLS certificates for Docker communication
+      - docker_certs:/certs/client:ro
+    environment:
+      # Skip initial setup wizard (optional - remove for production)
+      # - JAVA_OPTS=-Djenkins.install.runSetupWizard=false
+      # Docker host for pipeline Docker agent
+      - DOCKER_HOST=tcp://docker:2376
+      - DOCKER_TLS_VERIFY=1
+      - DOCKER_CERT_PATH=/certs/client
+    networks:
+      - jenkins-network
+    depends_on:
+      docker:
+        condition: service_healthy
+    # Run as root to access Docker socket (or configure proper group)
+    user: root
+
+  # ---------------------------------------------------------------------------
+  # DOCKER-IN-DOCKER (DIND) SERVICE
+  # ---------------------------------------------------------------------------
+  # Provides isolated Docker daemon for building and running containers.
+  docker:
+    image: docker:24-dind
+    container_name: jenkins-docker
+    restart: unless-stopped
+    privileged: true
+    environment:
+      # Enable TLS for secure Docker communication
+      DOCKER_TLS_CERTDIR: /certs
+    volumes:
+      # TLS certificates shared with Jenkins
+      - docker_certs:/certs/client
+      # Docker data (images, containers, volumes)
+      - docker_data:/var/lib/docker
+      # Share Jenkins workspace for bind mounts in pipelines
+      - jenkins_workspace:/var/jenkins_home/workspace
+    networks:
+      jenkins-network:
+        # Alias allows Jenkins to connect via 'docker' hostname
+        aliases:
+          - docker
+    healthcheck:
+      test: ["CMD", "docker", "info"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    # Expose Docker daemon port (internal only)
+    expose:
+      - "2376"
+
+  # ---------------------------------------------------------------------------
+  # JENKINS AGENT WITH DOCKER CLI (OPTIONAL)
+  # ---------------------------------------------------------------------------
+  # Pre-configured agent with Docker CLI for running pipeline stages.
+  # Uncomment if you need dedicated build agents.
+  #
+  # agent:
+  #   image: jenkins/inbound-agent:latest-jdk17
+  #   container_name: jenkins-agent
+  #   restart: unless-stopped
+  #   environment:
+  #     JENKINS_URL: http://jenkins:8080
+  #     JENKINS_AGENT_NAME: docker-agent
+  #     JENKINS_SECRET: <agent-secret-from-jenkins>
+  #     JENKINS_AGENT_WORKDIR: /home/jenkins/agent
+  #   volumes:
+  #     - /var/run/docker.sock:/var/run/docker.sock
+  #   networks:
+  #     - jenkins-network
+  #   depends_on:
+  #     - jenkins
+
+# -----------------------------------------------------------------------------
+# NETWORKS
+# -----------------------------------------------------------------------------
+networks:
+  jenkins-network:
+    driver: bridge
+    name: jenkins-network
+
+# -----------------------------------------------------------------------------
+# VOLUMES
+# -----------------------------------------------------------------------------
+volumes:
+  # Jenkins home directory (config, jobs, plugins)
+  jenkins_home:
+    name: jenkins_home
+  # Docker TLS certificates
+  docker_certs:
+    name: jenkins_docker_certs
+  # Docker daemon data (images, containers)
+  docker_data:
+    name: jenkins_docker_data
+  # Shared workspace between Jenkins and Docker
+  jenkins_workspace:
+    name: jenkins_workspace
