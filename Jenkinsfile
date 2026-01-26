@@ -4,7 +4,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
-                git branch: 'main', url: 'https://gitlab.com/docker-hooks-mcp-claude/docker-hooks-mcp.git'
+                git branch: 'main', url: 'https://gitlab.com/docker-hooks-mcp-claude/docker-hooks-mcp.git', credentialsId: 'gitlab-git'
                 sh 'ls -la'
             }
         }
