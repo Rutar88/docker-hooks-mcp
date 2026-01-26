@@ -1,13 +1,14 @@
 # Docker Hooks MCP
 
-A demo project showcasing a complete CI/CD workflow with GitLab, Docker, and automated testing.
+A demo project showcasing a complete CI/CD workflow with GitLab, Jenkins, Docker, and automated testing.
 
 ## What is this?
 
 A simple REST API for managing a todo list featuring:
-- Automated CI/CD pipeline in GitLab
-- Docker containerization
-- Unit tests (Python/pytest) and E2E tests (JavaScript/Jest)
+- Automated CI/CD pipeline in GitLab and Jenkins
+- Docker containerization with multi-stage builds
+- E2E tests (JavaScript/Jest) with JUnit reporting
+- Unit tests (Python/pytest)
 - Image publishing to GitLab Container Registry
 
 ## Tech Stack
@@ -19,7 +20,7 @@ A simple REST API for managing a todo list featuring:
 | E2E Tests | Jest + Supertest |
 | Unit Tests | Python + pytest |
 | Containerization | Docker + Docker Compose |
-| CI/CD | GitLab CI/CD |
+| CI/CD | GitLab CI/CD + Jenkins |
 
 ## API Endpoints
 
@@ -80,7 +81,113 @@ pip install -r requirements.txt
 pytest tests/test_api.py -v
 ```
 
-## CI/CD Pipeline
+---
+
+## Jenkins CI/CD
+
+This project includes a complete Jenkins pipeline for automated builds and testing.
+
+### Jenkins Stack Setup
+
+Start Jenkins with Docker-in-Docker support:
+
+```bash
+# Start Jenkins stack
+docker-compose -f jenkins-stack.yml up -d
+
+# Get initial admin password
+docker exec jenkins cat /var/jenkins_home/secrets/initialAdminPassword
+
+# Open Jenkins UI
+open http://localhost:8080
+```
+
+### Required Jenkins Plugins
+
+Install these plugins via Jenkins UI or CLI:
+
+```bash
+docker exec jenkins jenkins-plugin-cli --plugins \
+  docker-workflow \
+  docker-commons \
+  git \
+  junit \
+  workflow-aggregator \
+  pipeline-utility-steps
+```
+
+### Jenkins Credentials Setup
+
+1. Go to **Manage Jenkins** → **Credentials**
+2. Add new credential:
+   - **Kind**: Username with password
+   - **Username**: Your GitLab username
+   - **Password**: GitLab Personal Access Token (scope: `read_repository`)
+   - **ID**: `gitlab-git`
+
+### Jenkins Pipeline Stages
+
+```
+┌──────────┐   ┌──────────┐   ┌─────────┐   ┌──────────┐
+│ Checkout │ → │ Validate │ → │  Build  │ → │ Test:E2E │
+└──────────┘   └──────────┘   └─────────┘   └──────────┘
+                                                  │
+                                                  ▼
+┌──────────┐   ┌──────────┐   ┌─────────────────────────┐
+│ Cleanup  │ ← │  Report  │ ← │ Publish Test Results    │
+└──────────┘   └──────────┘   └─────────────────────────┘
+```
+
+| Stage | Description |
+|-------|-------------|
+| **Checkout** | Clone repository from GitLab using credentials |
+| **Validate** | Validate docker-compose.yml syntax |
+| **Build** | Build Docker images with docker-compose |
+| **Test: E2E** | Start stack, run Jest tests, generate JUnit report |
+| **Publish Test Results** | Archive JUnit XML for Jenkins test trends |
+| **Report** | Display build summary (images, containers) |
+| **Cleanup** | Stop containers and remove volumes |
+
+### Viewing Test Reports in Jenkins
+
+After running the pipeline:
+
+1. Go to job page: `http://localhost:8080/job/docker-hooks-mcp/`
+2. Click on a specific build (e.g., #24)
+3. Click **"Test Result"** in the left menu
+4. View detailed test results and history trends
+
+### Jenkins Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    jenkins-stack.yml                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌─────────────────┐         ┌─────────────────────────┐   │
+│  │    Jenkins      │   TLS   │    Docker-in-Docker     │   │
+│  │   Controller    │ ◄─────► │        (dind)           │   │
+│  │   :8080         │         │        :2376            │   │
+│  └─────────────────┘         └─────────────────────────┘   │
+│           │                              │                  │
+│           │                              ▼                  │
+│           │                   ┌─────────────────────────┐  │
+│           │                   │   Build Containers      │  │
+│           │                   │   - API                 │  │
+│           │                   │   - PostgreSQL          │  │
+│           │                   │   - Test runner         │  │
+│           ▼                   └─────────────────────────┘  │
+│  ┌─────────────────┐                                       │
+│  │ Jenkins Volumes │                                       │
+│  │ - jenkins_home  │                                       │
+│  │ - docker_certs  │                                       │
+│  └─────────────────┘                                       │
+└─────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## GitLab CI/CD Pipeline
 
 The GitLab pipeline consists of 5 stages:
 
@@ -88,7 +195,7 @@ The GitLab pipeline consists of 5 stages:
 validate → test:unit → test:e2e → docker:build → report
 ```
 
-### Stages
+### GitLab Stages
 
 | Stage | Job | Description |
 |-------|-----|-------------|
@@ -100,49 +207,59 @@ validate → test:unit → test:e2e → docker:build → report
 | report | report:summary | Test results summary |
 | report | report:pages | Publish coverage to GitLab Pages |
 
+---
+
 ## Project Structure
 
 ```
 docker-hooks-mcp/
 ├── app/
 │   └── api/
-│       ├── Dockerfile        # API image
-│       ├── server.js         # Express server
-│       └── package.json
+│       ├── Dockerfile          # Multi-stage Docker build
+│       ├── server.js           # Express server
+│       ├── package.json
+│       └── package-lock.json
 ├── tests/
-│   ├── api.test.js          # E2E tests (Jest)
-│   ├── test_api.py          # Unit tests (pytest)
-│   └── package.json
-├── docker-compose.yml        # Local environment config
-├── mcp.json                  # MCP configuration
-├── .gitlab-ci.yml           # CI/CD pipeline
-└── requirements.txt          # Python dependencies
+│   ├── api.test.js             # E2E tests (Jest)
+│   ├── test_api.py             # Unit tests (pytest)
+│   └── package.json            # Test dependencies + jest-junit
+├── docker-compose.yml          # Local development environment
+├── jenkins-stack.yml           # Jenkins + Docker-in-Docker
+├── Jenkinsfile                 # Jenkins pipeline definition
+├── mcp.json                    # MCP configuration
+├── .gitlab-ci.yml              # GitLab CI/CD pipeline
+└── requirements.txt            # Python dependencies
 ```
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────┐
-│                    GitLab CI/CD                         │
-│  ┌─────────┐  ┌─────────┐  ┌─────────┐  ┌───────────┐  │
-│  │validate │→ │test:unit│→ │test:e2e │→ │docker:build│  │
-│  └─────────┘  └─────────┘  └─────────┘  └─────────────┘  │
-└─────────────────────────────────────────────────────────┘
-                                              │
-                                              ▼
-                              ┌───────────────────────────┐
-                              │  GitLab Container Registry │
-                              │  registry.gitlab.com/...   │
-                              └───────────────────────────┘
-                                              │
-                                              ▼
-┌─────────────────────────────────────────────────────────┐
-│                   Docker Network                         │
-│  ┌─────────────────┐       ┌─────────────────────────┐  │
-│  │   PostgreSQL    │◄──────│      Node.js API        │  │
-│  │   :5432         │       │      :3000              │  │
-│  └─────────────────┘       └─────────────────────────┘  │
-└─────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                       CI/CD Options                          │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Option 1: GitLab CI/CD          Option 2: Jenkins          │
+│  ┌─────────────────────┐         ┌─────────────────────┐   │
+│  │   .gitlab-ci.yml    │         │    Jenkinsfile      │   │
+│  │   GitLab Runners    │         │    Jenkins Server   │   │
+│  └─────────────────────┘         └─────────────────────┘   │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+                              │
+                              ▼
+              ┌───────────────────────────┐
+              │  GitLab Container Registry │
+              │  registry.gitlab.com/...   │
+              └───────────────────────────┘
+                              │
+                              ▼
+┌─────────────────────────────────────────────────────────────┐
+│                     Docker Network                           │
+│  ┌─────────────────┐         ┌─────────────────────────┐   │
+│  │   PostgreSQL    │ ◄────── │      Node.js API        │   │
+│  │   :5432         │         │      :3000              │   │
+│  └─────────────────┘         └─────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ## Environment Variables
@@ -152,6 +269,38 @@ docker-hooks-mcp/
 | DATABASE_URL | postgres://test:testpass@localhost:5432/testdb | PostgreSQL connection string |
 | PORT | 3000 | API port |
 | API_URL | http://localhost:3000 | API URL for tests |
+
+## Troubleshooting
+
+### Jenkins: "isUnix" or "withEnv" not found
+
+This indicates missing pipeline plugins. Install with:
+
+```bash
+docker exec jenkins jenkins-plugin-cli --plugins workflow-basic-steps workflow-durable-task-step
+docker restart jenkins
+```
+
+### Jenkins: Docker commands not found
+
+Install Docker CLI in Jenkins container:
+
+```bash
+docker exec -u root jenkins apt-get update
+docker exec -u root jenkins apt-get install -y docker.io
+```
+
+### Jenkins: docker-compose not found
+
+Install docker-compose standalone:
+
+```bash
+docker exec -u root jenkins bash -c "curl -SL https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64 -o /usr/local/bin/docker-compose && chmod +x /usr/local/bin/docker-compose"
+```
+
+### GitLab: Access denied when cloning
+
+Create a Personal Access Token with `read_repository` scope and configure it in Jenkins credentials.
 
 ## License
 
