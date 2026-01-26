@@ -57,9 +57,10 @@ pipeline {
                     echo "=== Running E2E tests ==="
                     docker run --rm \
                         --network docker-hooks-mcp_test-network \
+                        -e API_URL=http://api:3000 \
                         -v "$(pwd)/tests:/tests" \
                         -w /tests \
-                        node:20-alpine sh -c "npm ci && npm test -- --forceExit" || true
+                        node:20-alpine sh -c "npm ci && npm test -- --forceExit"
 
                     echo "=== E2E tests completed ==="
                 '''
