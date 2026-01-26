@@ -11,7 +11,7 @@ pipeline {
 
         stage('Validate') {
             steps {
-                sh 'docker compose config --quiet && echo "docker-compose.yml is valid"'
+                sh 'docker-compose config > /dev/null && echo "docker-compose.yml is valid"'
             }
         }
 
