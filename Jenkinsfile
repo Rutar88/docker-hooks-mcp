@@ -49,12 +49,8 @@ pipeline {
 
     // Pipeline options
     options {
-        // Timeout for entire pipeline
-        timeout(time: 30, unit: 'MINUTES')
         // Keep only last 10 builds
         buildDiscarder(logRotator(numToKeepStr: '10'))
-        // Add timestamps to console output
-        timestamps()
         // Disable concurrent builds
         disableConcurrentBuilds()
     }
