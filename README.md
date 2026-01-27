@@ -125,6 +125,54 @@ docker exec jenkins jenkins-plugin-cli --plugins \
    - **Password**: GitLab Personal Access Token (scope: `read_repository`)
    - **ID**: `gitlab-git`
 
+### Creating a Jenkins Pipeline Job
+
+After setting up Jenkins and credentials, create a new pipeline job:
+
+1. **Create New Job**
+   - Go to Jenkins Dashboard: `http://localhost:8080`
+   - Click **"New Item"** in the left menu
+   - Enter job name: `docker-hooks-mcp`
+   - Select **"Pipeline"** as the job type
+   - Click **"OK"**
+
+2. **Configure Pipeline Source**
+   - Scroll down to the **"Pipeline"** section
+   - Change **"Definition"** from "Pipeline script" to **"Pipeline script from SCM"**
+   - Select **"Git"** as SCM
+   - Enter Repository URL: `https://gitlab.com/docker-hooks-mcp-claude/docker-hooks-mcp.git`
+   - Under **"Credentials"**, select `gitlab-git`
+   - Change **"Branch Specifier"** to `*/main`
+   - Ensure **"Script Path"** is set to `Jenkinsfile`
+   - Click **"Save"**
+
+3. **Run the Pipeline**
+   - Click **"Build Now"** in the left menu
+   - Click on the build number (e.g., #1) to see progress
+   - Click **"Console Output"** to view live logs
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    Jenkins Job Setup                         │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  1. New Item → "docker-hooks-mcp" → Pipeline                │
+│                                                              │
+│  2. Pipeline Configuration:                                  │
+│     ┌─────────────────────────────────────────────────────┐ │
+│     │ Definition: Pipeline script from SCM                 │ │
+│     │ SCM: Git                                             │ │
+│     │ Repository URL: https://gitlab.com/.../...git        │ │
+│     │ Credentials: gitlab-git                              │ │
+│     │ Branch: */main                                       │ │
+│     │ Script Path: Jenkinsfile                             │ │
+│     └─────────────────────────────────────────────────────┘ │
+│                                                              │
+│  3. Save → Build Now                                         │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
 ### Jenkins Pipeline Stages
 
 ```
