@@ -185,6 +185,102 @@ After running the pipeline:
 └─────────────────────────────────────────────────────────────┘
 ```
 
+### How Docker-in-Docker Works
+
+Jenkins runs inside a Docker container and builds application containers inside a **nested Docker daemon**. This is called **Docker-in-Docker (DinD)**:
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                        HOST (Your computer)                      │
+│                                                                  │
+│  ┌────────────────────────────────────────────────────────────┐ │
+│  │              Docker Engine (host)                           │ │
+│  │                                                             │ │
+│  │  ┌─────────────────┐      ┌─────────────────────────────┐  │ │
+│  │  │    Jenkins      │      │    Docker-in-Docker (dind)  │  │ │
+│  │  │   Container     │ TLS  │        Container            │  │ │
+│  │  │                 │◄────►│                             │  │ │
+│  │  │  "build image"  │      │  ┌───────────────────────┐  │  │ │
+│  │  │                 │      │  │  Docker Engine (nested)│  │  │ │
+│  │  │                 │      │  │                       │  │  │ │
+│  │  │                 │      │  │  ┌─────────────────┐  │  │  │ │
+│  │  │                 │      │  │  │   API Container │  │  │  │ │
+│  │  │                 │      │  │  │   (being built) │  │  │  │ │
+│  │  │                 │      │  │  └─────────────────┘  │  │  │ │
+│  │  │                 │      │  │                       │  │  │ │
+│  │  │                 │      │  │  ┌─────────────────┐  │  │  │ │
+│  │  │                 │      │  │  │   PostgreSQL    │  │  │  │ │
+│  │  │                 │      │  │  │   Container     │  │  │  │ │
+│  │  │                 │      │  │  └─────────────────┘  │  │  │ │
+│  │  │                 │      │  └───────────────────────┘  │  │ │
+│  │  └─────────────────┘      └─────────────────────────────┘  │ │
+│  └────────────────────────────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Build Flow
+
+```
+1. Jenkins (container) receives command "docker-compose build"
+                    │
+                    ▼
+2. Jenkins sends command to Docker-in-Docker via TLS (port 2376)
+                    │
+                    ▼
+3. DinD (container) runs its own Docker daemon
+                    │
+                    ▼
+4. Nested Docker daemon builds the API image
+                    │
+                    ▼
+5. Nested Docker daemon starts containers (API + PostgreSQL)
+                    │
+                    ▼
+6. Tests are executed against these containers
+```
+
+#### Docker Layers
+
+| Layer | What it is | Where it runs |
+|-------|------------|---------------|
+| **Host Docker** | Docker on your computer | macOS/Linux |
+| **Jenkins Container** | CI/CD server | Inside Host Docker |
+| **DinD Container** | Nested Docker daemon | Inside Host Docker |
+| **API Container** | Node.js application | Inside DinD Docker |
+| **PostgreSQL Container** | Database | Inside DinD Docker |
+
+#### Why Docker-in-Docker?
+
+**Isolation and security:**
+
+```
+Option 1: Mounting host socket (less secure)
+┌──────────────┐
+│   Jenkins    │──► /var/run/docker.sock ──► Host Docker
+└──────────────┘
+⚠️ Jenkins has full access to host!
+
+Option 2: Docker-in-Docker (more secure) ✓
+┌──────────────┐      ┌──────────────┐
+│   Jenkins    │─────►│     DinD     │──► Isolated Docker
+└──────────────┘ TLS  └──────────────┘
+✓ Builds are isolated from the host
+```
+
+#### Summary
+
+```
+Your computer
+    └── Docker (host)
+            ├── jenkins (container) ─── runs the pipeline
+            └── jenkins-docker (container) ─── DinD
+                    └── Docker daemon (nested)
+                            ├── api (container) ─── application
+                            └── postgres (container) ─── database
+```
+
+**Docker inside Docker inside Docker** - this is standard practice in CI/CD for build isolation.
+
 ---
 
 ## GitLab CI/CD Pipeline
