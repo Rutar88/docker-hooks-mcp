@@ -8,36 +8,35 @@ env:
 phases:
   install:
     commands:
-      - echo "=== Phase 1: Installing dependencies ==="
+      - echo "Installing docker-compose"
       - curl -SL "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose
       - chmod +x /usr/local/bin/docker-compose
       - docker-compose --version
 
   pre_build:
     commands:
-      - echo "=== Phase 2: Validating configuration ==="
+      - echo "Validating docker-compose.yml"
       - docker-compose config > /dev/null
-      - echo "Configuration is valid"
+      - echo "Validation passed"
 
   build:
     commands:
-      - echo "=== Phase 3: Building and testing ==="
-      - echo "Step 1 - Building Docker images..."
+      - echo "Building Docker images"
       - docker-compose build --no-cache
-      - echo "Step 2 - Starting application stack..."
+      - echo "Starting test stack"
       - docker-compose up -d
-      - echo "Step 3 - Waiting for services to be healthy..."
+      - echo "Waiting for services"
       - sleep 15
       - docker-compose ps
-      - echo "Step 4 - Running E2E tests with coverage..."
+      - echo "Running E2E tests"
       - docker run --rm --network docker-hooks-mcp_test-network -e API_URL=http://api:3000 -v "$(pwd)/tests:/tests" -w /tests node:20-alpine sh -c "npm ci && npm run test:ci"
-      - echo "Tests completed successfully"
+      - echo "E2E tests completed"
 
   post_build:
     commands:
-      - echo "=== Phase 4: Cleanup ==="
+      - echo "Cleanup - stopping containers"
       - docker-compose down -v || true
-      - echo "Cleanup completed"
+      - echo "Build completed"
 
 reports:
   e2e-test-reports:
