@@ -43,3 +43,7 @@ reports:
     files:
       - "tests/junit.xml"
     file-format: JUNITXML
+  coverage-reports:
+    files:
+      - "tests/coverage/clover.xml"
+    file-format: CLOVERXML
