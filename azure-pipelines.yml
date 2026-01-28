@@ -1,0 +1,167 @@
+# =============================================================================
+# AZURE DEVOPS PIPELINE FOR DOCKER-HOOKS-MCP
+# =============================================================================
+# This pipeline automates the CI/CD workflow for the Todo API.
+# It validates configuration, builds Docker images, runs E2E tests,
+# and publishes test reports.
+#
+# Prerequisites:
+#   - Azure DevOps project with Pipelines enabled
+#   - Microsoft-hosted agent (ubuntu-latest) with Docker pre-installed
+#
+# Pipeline Stages:
+#   1. Validate    - Validate docker-compose.yml syntax
+#   2. Build       - Build Docker images using docker-compose
+#   3. Test        - Run E2E tests against live stack
+#   4. Report      - Display build summary
+# =============================================================================
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    exclude:
+      - README.md
+      - '*.md'
+
+pool:
+  vmImage: 'ubuntu-latest'
+
+variables:
+  DOCKER_BUILDKIT: 1
+  COMPOSE_DOCKER_CLI_BUILD: 1
+
+stages:
+  # ===========================================================================
+  # STAGE 1: VALIDATE
+  # ===========================================================================
+  # Validates the docker-compose.yml file syntax before proceeding.
+  # This catches configuration errors early in the pipeline.
+  - stage: Validate
+    displayName: 'Validate Configuration'
+    jobs:
+      - job: ValidateDockerCompose
+        displayName: 'Validate docker-compose.yml'
+        steps:
+          - checkout: self
+            displayName: 'Checkout repository'
+
+          - script: |
+              echo "=== Validating docker-compose.yml ==="
+              docker-compose config > /dev/null
+              echo "docker-compose.yml is valid"
+            displayName: 'Validate docker-compose.yml'
+
+  # ===========================================================================
+  # STAGE 2: BUILD
+  # ===========================================================================
+  # Builds Docker images defined in docker-compose.yml.
+  # Uses --no-cache to ensure fresh builds every time.
+  - stage: Build
+    displayName: 'Build Docker Images'
+    dependsOn: Validate
+    jobs:
+      - job: BuildImages
+        displayName: 'Build with docker-compose'
+        steps:
+          - checkout: self
+            displayName: 'Checkout repository'
+
+          - script: |
+              echo "=== Building Docker images ==="
+              docker-compose build --no-cache
+              echo "=== Build completed ==="
+              docker images | grep -E "docker-hooks-mcp|api" || echo "Images built"
+            displayName: 'Build Docker images'
+
+  # ===========================================================================
+  # STAGE 3: TEST (E2E)
+  # ===========================================================================
+  # Runs end-to-end tests against the full application stack.
+  #
+  # Process:
+  #   1. Start all services (API + PostgreSQL) in detached mode
+  #   2. Wait for services to become healthy
+  #   3. Run Jest tests in a separate container connected to the network
+  #   4. Publish JUnit test results to Azure DevOps
+  - stage: Test
+    displayName: 'Run E2E Tests'
+    dependsOn: Build
+    jobs:
+      - job: E2ETests
+        displayName: 'E2E Tests with Jest'
+        steps:
+          - checkout: self
+            displayName: 'Checkout repository'
+
+          # Build images (needed because stages run on fresh agents)
+          - script: |
+              echo "=== Building Docker images ==="
+              docker-compose build
+            displayName: 'Build Docker images'
+
+          # Start the application stack
+          - script: |
+              echo "=== Starting test stack ==="
+              docker-compose up -d
+              echo "=== Waiting for services to be healthy ==="
+              sleep 15
+              echo "=== Checking service status ==="
+              docker-compose ps
+            displayName: 'Start application stack'
+
+          # Run E2E tests in a container connected to the app network
+          - script: |
+              echo "=== Running E2E tests ==="
+              docker run --rm \
+                --network docker-hooks-mcp_test-network \
+                -e API_URL=http://api:3000 \
+                -v "$(pwd)/tests:/tests" \
+                -w /tests \
+                node:20-alpine sh -c "npm ci && npm run test:ci"
+              echo "=== E2E tests completed ==="
+            displayName: 'Run E2E tests'
+
+          # Publish test results to Azure DevOps
+          # This enables the "Tests" tab in pipeline results
+          - task: PublishTestResults@2
+            displayName: 'Publish Test Results'
+            inputs:
+              testResultsFormat: 'JUnit'
+              testResultsFiles: 'tests/junit.xml'
+              testRunTitle: 'E2E Tests'
+              failTaskOnFailedTests: true
+            condition: always()
+
+          # Cleanup: Stop and remove containers
+          - script: |
+              echo "=== Cleanup: stopping containers ==="
+              docker-compose down -v || true
+              echo "Cleanup completed"
+            displayName: 'Cleanup containers'
+            condition: always()
+
+  # ===========================================================================
+  # STAGE 4: REPORT
+  # ===========================================================================
+  # Displays a summary of the build including Docker images and status.
+  - stage: Report
+    displayName: 'Build Report'
+    dependsOn: Test
+    condition: always()
+    jobs:
+      - job: Summary
+        displayName: 'Build Summary'
+        steps:
+          - script: |
+              echo "=========================================="
+              echo "           BUILD SUMMARY"
+              echo "=========================================="
+              echo "Pipeline: $(Build.DefinitionName)"
+              echo "Build Number: $(Build.BuildNumber)"
+              echo "Branch: $(Build.SourceBranchName)"
+              echo "Commit: $(Build.SourceVersion)"
+              echo "Triggered by: $(Build.RequestedFor)"
+              echo "=========================================="
+            displayName: 'Display build summary'

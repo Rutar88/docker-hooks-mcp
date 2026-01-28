@@ -1,0 +1,118 @@
+# =============================================================================
+# AWS CODEBUILD BUILDSPEC FOR DOCKER-HOOKS-MCP
+# =============================================================================
+# This buildspec automates the CI/CD workflow for the Todo API on AWS.
+# It validates configuration, builds Docker images, runs E2E tests,
+# and generates test reports.
+#
+# Prerequisites:
+#   - AWS CodeBuild project with Docker support enabled
+#   - Privileged mode enabled (for Docker-in-Docker)
+#   - Service role with ECR permissions (if pushing to ECR)
+#
+# Phases:
+#   1. install    - Install dependencies (docker-compose)
+#   2. pre_build  - Validate configuration
+#   3. build      - Build Docker images and run tests
+#   4. post_build - Generate reports and cleanup
+#
+# AWS Free Tier:
+#   - CodeBuild: 100 build minutes/month
+#   - CodePipeline: 1 active pipeline/month
+#   - ECR: 500 MB storage/month
+# =============================================================================
+
+version: 0.2
+
+env:
+  variables:
+    DOCKER_BUILDKIT: "1"
+    COMPOSE_DOCKER_CLI_BUILD: "1"
+
+phases:
+  # ===========================================================================
+  # PHASE 1: INSTALL
+  # ===========================================================================
+  # Install required tools (docker-compose is not pre-installed)
+  install:
+    runtime-versions:
+      docker: 20
+    commands:
+      - echo "=== Installing docker-compose ==="
+      - curl -SL "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose
+      - chmod +x /usr/local/bin/docker-compose
+      - docker-compose --version
+
+  # ===========================================================================
+  # PHASE 2: PRE_BUILD
+  # ===========================================================================
+  # Validate configuration before building
+  pre_build:
+    commands:
+      - echo "=== Validating docker-compose.yml ==="
+      - docker-compose config > /dev/null
+      - echo "docker-compose.yml is valid"
+      - echo "=== Pre-build completed ==="
+
+  # ===========================================================================
+  # PHASE 3: BUILD
+  # ===========================================================================
+  # Build Docker images and run E2E tests
+  build:
+    commands:
+      - echo "=== Building Docker images ==="
+      - docker-compose build --no-cache
+      - echo "Build completed"
+
+      - echo "=== Starting test stack ==="
+      - docker-compose up -d
+      - echo "=== Waiting for services to be healthy ==="
+      - sleep 15
+      - docker-compose ps
+
+      - echo "=== Running E2E tests ==="
+      - |
+        docker run --rm \
+          --network docker-hooks-mcp_test-network \
+          -e API_URL=http://api:3000 \
+          -v "$(pwd)/tests:/tests" \
+          -w /tests \
+          node:20-alpine sh -c "npm ci && npm run test:ci"
+      - echo "=== E2E tests completed ==="
+
+  # ===========================================================================
+  # PHASE 4: POST_BUILD
+  # ===========================================================================
+  # Cleanup and generate reports
+  post_build:
+    commands:
+      - echo "=== Cleanup: stopping containers ==="
+      - docker-compose down -v || true
+      - echo "Cleanup completed"
+
+      - echo "=========================================="
+      - echo "           BUILD SUMMARY"
+      - echo "=========================================="
+      - echo "Build ID: $CODEBUILD_BUILD_ID"
+      - echo "Build Number: $CODEBUILD_BUILD_NUMBER"
+      - echo "Source Version: $CODEBUILD_SOURCE_VERSION"
+      - echo "=========================================="
+
+# =============================================================================
+# REPORTS
+# =============================================================================
+# Publish JUnit test results to AWS CodeBuild Reports
+reports:
+  e2e-test-reports:
+    files:
+      - 'tests/junit.xml'
+    file-format: JUNITXML
+
+# =============================================================================
+# ARTIFACTS (OPTIONAL)
+# =============================================================================
+# Uncomment to save test results as build artifacts
+# artifacts:
+#   files:
+#     - tests/junit.xml
+#   name: test-results
