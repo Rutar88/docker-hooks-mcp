@@ -13,98 +13,58 @@
 
 version: 0.2
 
-# -----------------------------------------------------------------------------
-# Environment Variables
-# -----------------------------------------------------------------------------
-# DOCKER_BUILDKIT: Enables BuildKit for faster, more efficient builds
-# COMPOSE_DOCKER_CLI_BUILD: Uses Docker CLI for docker-compose builds
+# Environment Variables:
+# - DOCKER_BUILDKIT: Enables BuildKit for faster, more efficient builds
+# - COMPOSE_DOCKER_CLI_BUILD: Uses Docker CLI for docker-compose builds
 env:
   variables:
     DOCKER_BUILDKIT: "1"
     COMPOSE_DOCKER_CLI_BUILD: "1"
 
 phases:
-  # ---------------------------------------------------------------------------
-  # Phase 1: INSTALL
-  # ---------------------------------------------------------------------------
-  # Install required tools that are not pre-installed in the build image.
-  # Docker is pre-installed, but docker-compose needs to be added manually.
+  # Phase 1: INSTALL - Install docker-compose (not pre-installed in build image)
   install:
     commands:
       - echo "=== Phase 1: Installing dependencies ==="
-      # Download and install docker-compose v2
       - curl -SL "https://github.com/docker/compose/releases/download/v2.24.0/docker-compose-linux-x86_64" -o /usr/local/bin/docker-compose
       - chmod +x /usr/local/bin/docker-compose
-      # Verify installation
       - docker-compose --version
 
-  # ---------------------------------------------------------------------------
-  # Phase 2: PRE_BUILD
-  # ---------------------------------------------------------------------------
-  # Validate configuration files before starting the build.
-  # This catches syntax errors early and fails fast if config is invalid.
+  # Phase 2: PRE_BUILD - Validate configuration before building
   pre_build:
     commands:
       - echo "=== Phase 2: Validating configuration ==="
-      # Validate docker-compose.yml syntax
       - docker-compose config > /dev/null
       - echo "Configuration is valid"
 
-  # ---------------------------------------------------------------------------
-  # Phase 3: BUILD
-  # ---------------------------------------------------------------------------
-  # Main build phase: build images, start services, run tests.
-  # This is where the actual CI/CD work happens.
+  # Phase 3: BUILD - Build images, start stack, run E2E tests with coverage
   build:
     commands:
       - echo "=== Phase 3: Building and testing ==="
-
-      # Step 1: Build Docker images from Dockerfile
-      - echo "Building Docker images..."
+      - echo "Step 1: Building Docker images..."
       - docker-compose build --no-cache
-
-      # Step 2: Start the application stack (API + PostgreSQL)
-      - echo "Starting application stack..."
+      - echo "Step 2: Starting application stack..."
       - docker-compose up -d
-
-      # Step 3: Wait for services to be healthy
-      # The healthchecks in docker-compose.yml ensure services are ready
-      - echo "Waiting for services to be healthy..."
+      - echo "Step 3: Waiting for services to be healthy..."
       - sleep 15
       - docker-compose ps
-
-      # Step 4: Run E2E tests in a separate container
-      # Tests connect to the API via Docker network
-      - echo "Running E2E tests with coverage..."
+      - echo "Step 4: Running E2E tests with coverage..."
       - docker run --rm --network docker-hooks-mcp_test-network -e API_URL=http://api:3000 -v "$(pwd)/tests:/tests" -w /tests node:20-alpine sh -c "npm ci && npm run test:ci"
       - echo "Tests completed successfully"
 
-  # ---------------------------------------------------------------------------
-  # Phase 4: POST_BUILD
-  # ---------------------------------------------------------------------------
-  # Cleanup phase: stop containers and remove volumes.
-  # Always runs, even if build phase fails (due to || true).
+  # Phase 4: POST_BUILD - Cleanup containers and volumes
   post_build:
     commands:
       - echo "=== Phase 4: Cleanup ==="
-      # Stop and remove all containers, networks, and volumes
       - docker-compose down -v || true
       - echo "Cleanup completed"
 
-# -----------------------------------------------------------------------------
-# Reports Configuration
-# -----------------------------------------------------------------------------
-# CodeBuild automatically collects these reports and displays them in the console.
-# - Test reports: Show pass/fail status for each test
-# - Coverage reports: Show code coverage percentage
+# Reports: CodeBuild collects JUnit test results and Clover coverage reports
 reports:
-  # JUnit XML test results
   e2e-test-reports:
     files:
       - "tests/junit.xml"
     file-format: JUNITXML
-
-  # Clover XML coverage report
   coverage-reports:
     files:
       - "tests/coverage/clover.xml"
