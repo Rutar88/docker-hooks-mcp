@@ -1,28 +1,11 @@
-# =============================================================================
-# AWS CodeBuild Buildspec - Todo API CI/CD Pipeline
-# =============================================================================
-# This file defines the build steps for AWS CodeBuild.
-# It builds Docker images, runs E2E tests, and generates coverage reports.
-#
-# Prerequisites:
-#   - CodeBuild project with "Privileged" mode enabled (for Docker-in-Docker)
-#   - Environment: Ubuntu, Standard runtime, aws/codebuild/standard:7.0 image
-#
-# Free Tier: 100 build minutes/month (~100 builds with this config)
-# =============================================================================
-
 version: 0.2
 
-# Environment Variables:
-# - DOCKER_BUILDKIT: Enables BuildKit for faster, more efficient builds
-# - COMPOSE_DOCKER_CLI_BUILD: Uses Docker CLI for docker-compose builds
 env:
   variables:
     DOCKER_BUILDKIT: "1"
     COMPOSE_DOCKER_CLI_BUILD: "1"
 
 phases:
-  # Phase 1: INSTALL - Install docker-compose (not pre-installed in build image)
   install:
     commands:
       - echo "=== Phase 1: Installing dependencies ==="
@@ -30,36 +13,32 @@ phases:
       - chmod +x /usr/local/bin/docker-compose
       - docker-compose --version
 
-  # Phase 2: PRE_BUILD - Validate configuration before building
   pre_build:
     commands:
       - echo "=== Phase 2: Validating configuration ==="
       - docker-compose config > /dev/null
       - echo "Configuration is valid"
 
-  # Phase 3: BUILD - Build images, start stack, run E2E tests with coverage
   build:
     commands:
       - echo "=== Phase 3: Building and testing ==="
-      - echo "Step 1: Building Docker images..."
+      - echo "Step 1 - Building Docker images..."
       - docker-compose build --no-cache
-      - echo "Step 2: Starting application stack..."
+      - echo "Step 2 - Starting application stack..."
       - docker-compose up -d
-      - echo "Step 3: Waiting for services to be healthy..."
+      - echo "Step 3 - Waiting for services to be healthy..."
       - sleep 15
       - docker-compose ps
-      - echo "Step 4: Running E2E tests with coverage..."
+      - echo "Step 4 - Running E2E tests with coverage..."
       - docker run --rm --network docker-hooks-mcp_test-network -e API_URL=http://api:3000 -v "$(pwd)/tests:/tests" -w /tests node:20-alpine sh -c "npm ci && npm run test:ci"
       - echo "Tests completed successfully"
 
-  # Phase 4: POST_BUILD - Cleanup containers and volumes
   post_build:
     commands:
       - echo "=== Phase 4: Cleanup ==="
       - docker-compose down -v || true
       - echo "Cleanup completed"
 
-# Reports: CodeBuild collects JUnit test results and Clover coverage reports
 reports:
   e2e-test-reports:
     files:
