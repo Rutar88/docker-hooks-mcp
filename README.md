@@ -20,7 +20,7 @@ A simple REST API for managing a todo list featuring:
 | E2E Tests | Jest + Supertest |
 | Unit Tests | Python + pytest |
 | Containerization | Docker + Docker Compose |
-| CI/CD | GitLab CI/CD + Jenkins |
+| CI/CD | GitLab CI/CD, Jenkins, AWS CodeBuild |
 
 ## API Endpoints
 
@@ -331,6 +331,158 @@ Your computer
 
 ---
 
+## AWS CodeBuild
+
+This project supports AWS CodeBuild for cloud-based CI/CD within the AWS Free Tier.
+
+### AWS Free Tier Limits
+
+| Service | Free Tier | Our Usage |
+|---------|-----------|-----------|
+| CodeBuild | 100 minutes/month | ~1 min/build |
+| CloudWatch Logs | 5 GB/month | minimal |
+| S3 (artifacts) | 5 GB/month | optional |
+
+**Result: ~100 free builds per month**
+
+### Quick Setup (5 minutes)
+
+1. **Open AWS CodeBuild Console**
+   - Go to: https://console.aws.amazon.com/codebuild/home
+   - Click **"Create project"**
+
+2. **Project Configuration**
+   | Setting | Value |
+   |---------|-------|
+   | Project name | `docker-hooks-mcp` |
+   | Description | `Todo API CI/CD pipeline` |
+
+3. **Source Configuration**
+   | Setting | Value |
+   |---------|-------|
+   | Source provider | GitHub |
+   | Repository | Connect to GitHub → select your repo |
+   | Source version | `main` |
+
+4. **Environment Configuration** (Important!)
+   | Setting | Value |
+   |---------|-------|
+   | Environment image | Managed image |
+   | Compute | EC2 |
+   | Operating system | Ubuntu |
+   | Runtime | Standard |
+   | Image | `aws/codebuild/standard:7.0` |
+   | Image version | Always use the latest |
+   | **Privileged** | **YES** (required for Docker!) |
+   | Service role | New service role |
+
+5. **Buildspec**
+   | Setting | Value |
+   |---------|-------|
+   | Build specifications | Use a buildspec file |
+   | Buildspec name | `buildspec.yml` (default) |
+
+6. **Logs**
+   | Setting | Value |
+   |---------|-------|
+   | CloudWatch logs | YES |
+   | Group name | `/codebuild/docker-hooks-mcp` |
+
+7. Click **"Create build project"**
+
+### Running a Build
+
+1. Go to your CodeBuild project
+2. Click **"Start build"**
+3. Leave defaults and click **"Start build"**
+4. Watch logs in real-time
+
+### Build Pipeline Stages
+
+```
+┌─────────┐   ┌───────────┐   ┌─────────┐   ┌────────────┐
+│ INSTALL │ → │ PRE_BUILD │ → │  BUILD  │ → │ POST_BUILD │
+└─────────┘   └───────────┘   └─────────┘   └────────────┘
+     │              │              │               │
+     ▼              ▼              ▼               ▼
+  Install       Validate       Build &         Cleanup
+  docker-      docker-compose   run E2E       containers
+  compose        config         tests
+```
+
+| Phase | Description | Duration |
+|-------|-------------|----------|
+| INSTALL | Install docker-compose | ~2s |
+| PRE_BUILD | Validate configuration | ~1s |
+| BUILD | Build images, start stack, run tests | ~40s |
+| POST_BUILD | Stop containers, cleanup | ~10s |
+
+### Viewing Test Reports
+
+After a successful build:
+
+1. Go to **CodeBuild** → **Report groups** (left menu)
+2. Click on `docker-hooks-mcp-e2e-test-reports`
+3. View:
+   - Test pass/fail status
+   - Test duration trends
+   - Code coverage percentage
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                     AWS CodeBuild                            │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  ┌─────────────────────────────────────────────────────┐    │
+│  │              Build Container (Ubuntu)                │    │
+│  │                                                      │    │
+│  │  ┌────────────────┐    ┌────────────────────────┐   │    │
+│  │  │ docker-compose │    │   Docker Engine        │   │    │
+│  │  │     CLI        │───►│   (privileged mode)    │   │    │
+│  │  └────────────────┘    └────────────────────────┘   │    │
+│  │                                  │                   │    │
+│  │                                  ▼                   │    │
+│  │                        ┌─────────────────┐          │    │
+│  │                        │  API Container  │          │    │
+│  │                        │  (Node.js)      │          │    │
+│  │                        └─────────────────┘          │    │
+│  │                                  │                   │    │
+│  │                                  ▼                   │    │
+│  │                        ┌─────────────────┐          │    │
+│  │                        │   PostgreSQL    │          │    │
+│  │                        │   Container     │          │    │
+│  │                        └─────────────────┘          │    │
+│  └─────────────────────────────────────────────────────┘    │
+│                                                              │
+│  Reports:                                                    │
+│  ├── JUnit XML (test results)                               │
+│  └── Clover XML (code coverage)                             │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Buildspec Reference
+
+The `buildspec.yml` file defines the build process:
+
+```yaml
+version: 0.2
+phases:
+  install:    # Install docker-compose
+  pre_build:  # Validate configuration
+  build:      # Build images, run tests
+  post_build: # Cleanup
+reports:
+  e2e-test-reports:     # JUnit test results
+  coverage-reports:     # Code coverage
+```
+
+See `buildspec.yml` for the full configuration with comments.
+
+---
+
 ## GitLab CI/CD Pipeline
 
 The GitLab pipeline consists of 5 stages:
@@ -370,6 +522,7 @@ docker-hooks-mcp/
 ├── docker-compose.yml          # Local development environment
 ├── jenkins-stack.yml           # Jenkins + Docker-in-Docker
 ├── Jenkinsfile                 # Jenkins pipeline definition
+├── buildspec.yml               # AWS CodeBuild pipeline
 ├── mcp.json                    # MCP configuration
 ├── .gitlab-ci.yml              # GitLab CI/CD pipeline
 └── requirements.txt            # Python dependencies
@@ -378,17 +531,17 @@ docker-hooks-mcp/
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                       CI/CD Options                          │
-├─────────────────────────────────────────────────────────────┤
-│                                                              │
-│  Option 1: GitLab CI/CD          Option 2: Jenkins          │
-│  ┌─────────────────────┐         ┌─────────────────────┐   │
-│  │   .gitlab-ci.yml    │         │    Jenkinsfile      │   │
-│  │   GitLab Runners    │         │    Jenkins Server   │   │
-│  └─────────────────────┘         └─────────────────────┘   │
-│                                                              │
-└─────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────────┐
+│                           CI/CD Options                                  │
+├─────────────────────────────────────────────────────────────────────────┤
+│                                                                          │
+│  Option 1: GitLab     Option 2: Jenkins      Option 3: AWS CodeBuild   │
+│  ┌─────────────────┐  ┌─────────────────┐    ┌─────────────────┐       │
+│  │ .gitlab-ci.yml  │  │   Jenkinsfile   │    │  buildspec.yml  │       │
+│  │ GitLab Runners  │  │ Jenkins Server  │    │  AWS Managed    │       │
+│  └─────────────────┘  └─────────────────┘    └─────────────────┘       │
+│                                                                          │
+└─────────────────────────────────────────────────────────────────────────┘
                               │
                               ▼
               ┌───────────────────────────┐
